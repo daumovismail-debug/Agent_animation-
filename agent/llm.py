@@ -66,9 +66,11 @@ async def _ask_subscription_async(system: str, user: str) -> str:
         permission_mode="bypassPermissions",
         allowed_tools=[],
         extra_args={
-            "thinking": json.dumps(
-                {"type": "enabled", "budget_tokens": THINKING_BUDGET}
-            ),
+            # CLI принимает только "enabled" / "adaptive" / "disabled".
+            # Конкретный budget_tokens через CLI задать нельзя — он управляется
+            # на стороне Claude Code. Для точного контроля нужен API-ключ
+            # (там можно передать {"type": "enabled", "budget_tokens": N}).
+            "thinking": "enabled",
         },
     )
 
