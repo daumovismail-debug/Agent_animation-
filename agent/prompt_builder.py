@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 from .llm import ask_json, ask_json_async
@@ -88,14 +89,18 @@ def build_image_prompts(project: VideoProject) -> VideoProject:
 
 
 async def build_image_prompts_async(project: VideoProject) -> VideoProject:
+    """Все сцены параллельно — ~Nx быстрее, чем последовательно."""
     system = (PROMPTS_DIR / "system_image_prompt.md").read_text(encoding="utf-8")
     styles = _load_styles()
     style_pack = styles.get(project.style, styles["cinematic"])
-    for scene in project.scenes:
+
+    async def one(scene):
         n = _resolve_keyframes_count(scene, project)
         ctx = _scene_context(scene, project, style_pack)
         data = await ask_json_async(system, _image_user(scene, ctx, n))
         _ingest_keyframes(scene, data, n)
+
+    await asyncio.gather(*(one(s) for s in project.scenes))
     return project
 
 
@@ -119,10 +124,12 @@ def build_animation_prompts(
 async def build_animation_prompts_async(
     project: VideoProject, duration: int, aspect: str
 ) -> VideoProject:
+    """Все сцены параллельно."""
     system = (PROMPTS_DIR / "system_animation_prompt.md").read_text(encoding="utf-8")
     styles = _load_styles()
     style_pack = styles.get(project.style, styles["cinematic"])
-    for scene in project.scenes:
+
+    async def one(scene):
         ctx = _scene_context(scene, project, style_pack)
         user = _animation_user(scene, ctx, duration, aspect)
         data = await ask_json_async(system, user)
@@ -130,4 +137,6 @@ async def build_animation_prompts_async(
         scene.animation_negative = data.get("animation_negative", "")
         scene.duration_sec = int(data.get("duration_sec", duration))
         scene.aspect_ratio = data.get("aspect_ratio", aspect)
+
+    await asyncio.gather(*(one(s) for s in project.scenes))
     return project

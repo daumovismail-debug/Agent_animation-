@@ -19,9 +19,10 @@ import os
 import re
 
 MODEL = "claude-opus-4-7"
-# "high" thinking budget — даём модели запас на размышление перед ответом
-THINKING_BUDGET = 16000
-MAX_TOKENS = 24000  # должно быть > THINKING_BUDGET + полезного ответа
+# Thinking budget — баланс между качеством и скоростью.
+# 8000 ≈ medium-high. Можно увеличить до 16000 если нужно качество > скорости.
+THINKING_BUDGET = 8000
+MAX_TOKENS = 16000  # должно быть > THINKING_BUDGET + полезного ответа
 
 
 def _strip_fences(text: str) -> str:
