@@ -1,0 +1,20 @@
+[Unit]
+Description=Agent Animation — Telegram bot for Grok video prompts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Agent_animation-
+Environment=HOME=/root
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/etc/agent-bot.env
+ExecStart=/usr/bin/python3 -m agent.bot
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
