@@ -1,0 +1,27 @@
+{
+  "cinematic": {
+    "look": "cinematic, shot on ARRI Alexa, 35mm film, shallow depth of field, anamorphic lens flare",
+    "lighting": "dramatic key light, soft fill, golden hour or moody blue hour",
+    "color": "teal and orange grade, high contrast, filmic"
+  },
+  "anime": {
+    "look": "2D anime, Studio Ghibli inspired, hand-drawn, expressive characters",
+    "lighting": "soft painterly light, warm sunset tones",
+    "color": "vibrant saturated palette, watercolor backgrounds"
+  },
+  "3d": {
+    "look": "Pixar-style 3D animation, subsurface scattering, soft shaders, stylized proportions",
+    "lighting": "three-point lighting, soft rim light, ambient occlusion",
+    "color": "saturated, family-friendly palette"
+  },
+  "realistic": {
+    "look": "photorealistic, 8k detail, natural skin and materials, documentary feel",
+    "lighting": "natural daylight, realistic shadows",
+    "color": "neutral grade, true-to-life"
+  },
+  "cartoon": {
+    "look": "2D cartoon, bold outlines, flat colors, exaggerated motion",
+    "lighting": "flat cel shading",
+    "color": "bright primary colors, high saturation"
+  }
+}
