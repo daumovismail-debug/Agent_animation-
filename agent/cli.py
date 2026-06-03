@@ -1,6 +1,5 @@
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -8,75 +7,7 @@ from .llm import backend_info
 from .clarify import plan_questions, ask_user_interactively
 from .script import generate_script
 from .prompt_builder import build_image_prompts, build_animation_prompts
-from .models import VideoProject
-
-
-def _slugify(text: str) -> str:
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text, flags=re.UNICODE)
-    text = re.sub(r"[\s-]+", "-", text)
-    return text[:60] or "project"
-
-
-def _render_markdown(project: VideoProject) -> str:
-    lines = [
-        f"# {project.title}",
-        "",
-        f"**Идея:** {project.idea}",
-        f"**Стиль:** {project.style}",
-        f"**Сцен:** {len(project.scenes)}",
-        f"**Разговорное видео:** {'да' if project.is_dialogue_heavy else 'нет'}",
-        "",
-        f"**Главный герой (anchor):** {project.character_anchor}",
-        "",
-    ]
-    if project.voice_notes:
-        lines += [f"**Голос:** {project.voice_notes}", ""]
-    if project.clarifications:
-        lines += ["**Уточнения от пользователя:**", ""]
-        for k, v in project.clarifications.items():
-            lines.append(f"- {k}: {v}")
-        lines.append("")
-    lines += ["---", ""]
-
-    for s in project.scenes:
-        lines += [
-            f"## Сцена {s.number}: {s.summary}",
-            "",
-            f"- Длительность: {s.duration_sec} сек | {s.aspect_ratio} | "
-            f"настроение: {s.mood}",
-            "",
-            "### 1. Промт для картинки (ключевой кадр)",
-            "",
-            "```",
-            s.image_prompt or "",
-            "```",
-            "",
-            "Negative:",
-            "```",
-            s.image_negative or "",
-            "```",
-            "",
-            "### 2. Промт для анимации (image-to-video)",
-            "",
-            "```",
-            s.animation_prompt or "",
-            "```",
-            "",
-            "Negative:",
-            "```",
-            s.animation_negative or "",
-            "```",
-            "",
-        ]
-        if s.dialogue:
-            lines += ["### 3. Реплики", ""]
-            for d in s.dialogue:
-                emo = f" _({d.emotion})_" if d.emotion else ""
-                lines.append(f"- **{d.speaker}**{emo}: {d.text}")
-            lines.append("")
-        lines += ["---", ""]
-    return "\n".join(lines)
+from .render import slugify, render_markdown
 
 
 def main(argv=None):
@@ -105,17 +36,15 @@ def main(argv=None):
     print(f"Бэкенд: {backend_info()}")
     print(f"Модель: claude-opus-4-7 + extended thinking (high)\n")
 
-    # 1. Уточняющие вопросы
-    clarifications: dict = {}
     print(f"[1/4] Анализирую идею и решаю, что доспросить...")
     plan = plan_questions(args.idea, args.style)
     is_dialogue_heavy = bool(plan.get("is_dialogue_heavy", False))
     print(f"      {plan.get('reasoning', '')}")
 
+    clarifications: dict = {}
     if not args.no_questions:
         clarifications = ask_user_interactively(plan)
 
-    # 2. Сценарий
     print(f"[2/4] Пишу сценарий из {args.scenes} сцен...")
     project = generate_script(
         idea=args.idea,
@@ -126,22 +55,19 @@ def main(argv=None):
     )
     print(f"      «{project.title}» — {len(project.scenes)} сцен")
 
-    # 3. Image prompts
     print(f"[3/4] Генерирую промты для картинок (ключевые кадры)...")
     build_image_prompts(project)
 
-    # 4. Animation prompts
     print(f"[4/4] Генерирую промты для анимации...")
     build_animation_prompts(project, args.duration, args.aspect)
 
-    # Сохранение
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    slug = _slugify(project.title)
+    slug = slugify(project.title)
     md_path = out_dir / f"{slug}.md"
     json_path = out_dir / f"{slug}.json"
 
-    md_path.write_text(_render_markdown(project), encoding="utf-8")
+    md_path.write_text(render_markdown(project), encoding="utf-8")
     json_path.write_text(
         json.dumps(project.to_dict(), ensure_ascii=False, indent=2),
         encoding="utf-8",

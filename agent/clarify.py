@@ -3,9 +3,18 @@
 у пользователя перед генерацией сценария.
 """
 from pathlib import Path
-from .llm import ask_json
+from .llm import ask_json, ask_json_async
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+
+
+def _clarify_user(idea: str, style: str) -> str:
+    return f"Идея пользователя: {idea}\nВыбранный стиль: {style}\n"
+
+
+async def plan_questions_async(idea: str, style: str) -> dict:
+    system = (PROMPTS_DIR / "system_clarify.md").read_text(encoding="utf-8")
+    return await ask_json_async(system, _clarify_user(idea, style))
 
 
 def plan_questions(idea: str, style: str) -> dict:
@@ -18,8 +27,7 @@ def plan_questions(idea: str, style: str) -> dict:
     }
     """
     system = (PROMPTS_DIR / "system_clarify.md").read_text(encoding="utf-8")
-    user = f"Идея пользователя: {idea}\nВыбранный стиль: {style}\n"
-    return ask_json(system, user)
+    return ask_json(system, _clarify_user(idea, style))
 
 
 def ask_user_interactively(plan: dict) -> dict:

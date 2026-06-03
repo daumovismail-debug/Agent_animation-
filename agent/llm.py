@@ -64,7 +64,6 @@ async def _ask_subscription_async(system: str, user: str) -> str:
         model=MODEL,
         max_turns=1,
         permission_mode="bypassPermissions",
-        # Никаких инструментов — только текст
         allowed_tools=[],
         extra_args={
             "thinking": json.dumps(
@@ -75,7 +74,6 @@ async def _ask_subscription_async(system: str, user: str) -> str:
 
     chunks: list[str] = []
     async for message in query(prompt=user, options=options):
-        # message может быть AssistantMessage с .content = list of TextBlock
         content = getattr(message, "content", None)
         if not content:
             continue
@@ -141,6 +139,41 @@ def ask_text(system: str, user: str) -> str:
 def ask_json(system: str, user: str) -> dict:
     """Просит Claude вернуть JSON и парсит его."""
     text = ask_text(system, user)
+    return _parse_json(text)
+
+
+async def _ask_api_key_async(system: str, user: str) -> str:
+    from anthropic import AsyncAnthropic  # type: ignore
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise RuntimeError(
+            "Нет ANTHROPIC_API_KEY и нет Claude Agent SDK — не могу обратиться к Claude."
+        )
+    client = AsyncAnthropic()
+    msg = await client.messages.create(
+        model=MODEL,
+        max_tokens=MAX_TOKENS,
+        system=system,
+        thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
+        messages=[{"role": "user", "content": user}],
+    )
+    parts: list[str] = []
+    for block in msg.content:
+        if getattr(block, "type", None) == "text":
+            parts.append(block.text)
+    return "".join(parts)
+
+
+async def ask_text_async(system: str, user: str) -> str:
+    """Async-версия для использования внутри event loop (например, телеграм-бота)."""
+    backend = _backend_name()
+    if backend == "subscription":
+        return await _ask_subscription_async(system, user)
+    return await _ask_api_key_async(system, user)
+
+
+async def ask_json_async(system: str, user: str) -> dict:
+    text = await ask_text_async(system, user)
     return _parse_json(text)
 
 

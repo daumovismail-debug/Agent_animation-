@@ -4,3 +4,6 @@ claude-agent-sdk>=0.1.0
 
 # Fallback на случай отсутствия SDK подписки. Биллинг с ANTHROPIC_API_KEY.
 anthropic>=0.40.0
+
+# Telegram-бот
+aiogram>=3.10.0
