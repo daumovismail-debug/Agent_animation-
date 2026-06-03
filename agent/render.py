@@ -9,6 +9,14 @@ def slugify(text: str) -> str:
     return text[:60] or "project"
 
 
+_KF_TITLE = {
+    "only": "ключевой кадр",
+    "start": "первый кадр (start)",
+    "middle": "средний кадр (middle)",
+    "end": "последний кадр (end)",
+}
+
+
 def render_markdown(project: VideoProject) -> str:
     lines = [
         f"# {project.title}",
@@ -17,6 +25,7 @@ def render_markdown(project: VideoProject) -> str:
         f"**Стиль:** {project.style}",
         f"**Сцен:** {len(project.scenes)}",
         f"**Разговорное видео:** {'да' if project.is_dialogue_heavy else 'нет'}",
+        f"**Режим кадров:** {project.keyframes_mode}",
         "",
         f"**Главный герой (anchor):** {project.character_anchor}",
         "",
@@ -34,33 +43,36 @@ def render_markdown(project: VideoProject) -> str:
         lines += [
             f"## Сцена {s.number}: {s.summary}",
             "",
-            f"- {s.duration_sec} сек | {s.aspect_ratio} | настроение: {s.mood}",
+            f"- {s.duration_sec} сек | {s.aspect_ratio} | {s.mood} | "
+            f"кадров: {len(s.keyframes)}",
             "",
-            "### 1. Промт для картинки (ключевой кадр)",
+            "### Промты для картинок",
             "",
-            "```",
-            s.image_prompt or "",
-            "```",
-            "",
-            "Negative:",
-            "```",
-            s.image_negative or "",
-            "```",
-            "",
-            "### 2. Промт для анимации (image-to-video)",
+        ]
+        for i, k in enumerate(s.keyframes, 1):
+            title = _KF_TITLE.get(k.label, k.label)
+            lines += [
+                f"**{i}. {title}**",
+                "",
+                "```",
+                k.prompt,
+                "```",
+                "",
+            ]
+            if k.negative:
+                lines += ["Negative:", "```", k.negative, "```", ""]
+        lines += [
+            "### Промт для анимации (image-to-video)",
             "",
             "```",
             s.animation_prompt or "",
             "```",
             "",
-            "Negative:",
-            "```",
-            s.animation_negative or "",
-            "```",
-            "",
         ]
+        if s.animation_negative:
+            lines += ["Negative:", "```", s.animation_negative, "```", ""]
         if s.dialogue:
-            lines += ["### 3. Реплики", ""]
+            lines += ["### Реплики", ""]
             for d in s.dialogue:
                 emo = f" _({d.emotion})_" if d.emotion else ""
                 lines.append(f"- **{d.speaker}**{emo}: {d.text}")
@@ -70,25 +82,30 @@ def render_markdown(project: VideoProject) -> str:
 
 
 def render_scene_brief(scene, total: int) -> str:
-    """Короткий блок для одной сцены — отправляется в чат как сообщение."""
+    """Краткий блок для одной сцены, в телеграм."""
     parts = [
         f"🎬 Сцена {scene.number}/{total}: {scene.summary}",
-        f"⏱ {scene.duration_sec}с | {scene.aspect_ratio} | {scene.mood}",
+        f"⏱ {scene.duration_sec}с | {scene.aspect_ratio} | {scene.mood} | "
+        f"🖼 кадров: {len(scene.keyframes)}",
         "",
-        "🖼 Картинка:",
-        f"```\n{scene.image_prompt or ''}\n```",
     ]
-    if scene.image_negative:
-        parts.append(f"_neg:_ `{scene.image_negative}`")
+    for i, k in enumerate(scene.keyframes, 1):
+        title = _KF_TITLE.get(k.label, k.label)
+        parts += [
+            f"🖼 *{i}. {title}*",
+            f"```\n{k.prompt}\n```",
+        ]
+        if k.negative:
+            parts.append(f"_neg:_ `{k.negative}`")
+        parts.append("")
     parts += [
-        "",
-        "🎞 Анимация:",
+        "🎞 *Анимация:*",
         f"```\n{scene.animation_prompt or ''}\n```",
     ]
     if scene.animation_negative:
         parts.append(f"_neg:_ `{scene.animation_negative}`")
     if scene.dialogue:
-        parts += ["", "💬 Реплики:"]
+        parts += ["", "💬 *Реплики:*"]
         for d in scene.dialogue:
             emo = f" ({d.emotion})" if d.emotion else ""
             parts.append(f"• *{d.speaker}*{emo}: {d.text}")

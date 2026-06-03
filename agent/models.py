@@ -13,6 +13,17 @@ class DialogueLine:
 
 
 @dataclass
+class Keyframe:
+    """Один ключевой кадр сцены — промт для генератора картинок."""
+    label: str       # "only" | "start" | "middle" | "end"
+    prompt: str
+    negative: str = ""
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
 class Scene:
     number: int
     summary: str
@@ -22,8 +33,11 @@ class Scene:
     setting: str
     lighting: str
     mood: str
-    image_prompt: Optional[str] = None
-    image_negative: Optional[str] = None
+    # Claude-рекомендация сколько кадров надо именно этой сцене (1..3)
+    suggested_keyframes: int = 1
+    # Сгенерированные кадры (1, 2 или 3 штуки)
+    keyframes: List[Keyframe] = field(default_factory=list)
+    # Промт для image-to-video — оживить кадр(ы)
     animation_prompt: Optional[str] = None
     animation_negative: Optional[str] = None
     dialogue: List[DialogueLine] = field(default_factory=list)
@@ -31,8 +45,7 @@ class Scene:
     aspect_ratio: str = "16:9"
 
     def to_dict(self):
-        d = asdict(self)
-        return d
+        return asdict(self)
 
 
 @dataclass
@@ -43,6 +56,8 @@ class VideoProject:
     character_anchor: str
     is_dialogue_heavy: bool = False
     voice_notes: str = ""
+    # "auto" | "1" | "2" | "3" — настройка пользователя
+    keyframes_mode: str = "auto"
     scenes: List[Scene] = field(default_factory=list)
     clarifications: dict = field(default_factory=dict)
 
@@ -54,6 +69,7 @@ class VideoProject:
             "character_anchor": self.character_anchor,
             "is_dialogue_heavy": self.is_dialogue_heavy,
             "voice_notes": self.voice_notes,
+            "keyframes_mode": self.keyframes_mode,
             "clarifications": self.clarifications,
             "scenes": [s.to_dict() for s in self.scenes],
         }

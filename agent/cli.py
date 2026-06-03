@@ -25,6 +25,12 @@ def main(argv=None):
     parser.add_argument("--scenes", type=int, default=4, help="Количество сцен")
     parser.add_argument("--duration", type=int, default=6, help="Сек на сцену")
     parser.add_argument("--aspect", default="16:9", help="Соотношение сторон")
+    parser.add_argument(
+        "--keyframes",
+        default="auto",
+        choices=["auto", "1", "2", "3"],
+        help="Сколько ключевых кадров на сцену. auto = Claude решает сам.",
+    )
     parser.add_argument("--out", default="output", help="Папка для результатов")
     parser.add_argument(
         "--no-questions",
@@ -52,6 +58,7 @@ def main(argv=None):
         scenes_count=args.scenes,
         is_dialogue_heavy=is_dialogue_heavy,
         clarifications=clarifications,
+        keyframes_mode=args.keyframes,
     )
     print(f"      «{project.title}» — {len(project.scenes)} сцен")
 

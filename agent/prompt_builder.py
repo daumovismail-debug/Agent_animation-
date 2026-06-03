@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from .llm import ask_json, ask_json_async
-from .models import VideoProject
+from .models import VideoProject, Keyframe
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
@@ -33,13 +33,46 @@ def _scene_context(scene, project, style_pack) -> str:
     )
 
 
-def _animation_user(scene, ctx, duration, aspect):
+def _resolve_keyframes_count(scene, project) -> int:
+    """Сколько кадров делать для конкретной сцены."""
+    mode = project.keyframes_mode
+    if mode == "auto":
+        return max(1, min(3, scene.suggested_keyframes))
+    if mode in ("1", "2", "3"):
+        return int(mode)
+    return 1
+
+
+def _image_user(scene, ctx, n: int) -> str:
+    return f"{ctx}Number of keyframes to generate (N): {n}\n"
+
+
+def _animation_user(scene, ctx, duration, aspect) -> str:
+    kf_block = "Keyframes:\n" + "\n".join(
+        f"  - [{k.label}] {k.prompt}" for k in scene.keyframes
+    )
     return (
-        f"{ctx}"
-        f"Existing image keyframe prompt: {scene.image_prompt}\n"
+        f"{ctx}{kf_block}\n"
         f"Target duration: {duration} sec\n"
         f"Aspect ratio: {aspect}\n"
     )
+
+
+def _ingest_keyframes(scene, data, n: int):
+    raw = data.get("keyframes", [])
+    keyframes = []
+    for item in raw[:n]:
+        keyframes.append(
+            Keyframe(
+                label=item.get("label", "only"),
+                prompt=item.get("prompt", ""),
+                negative=item.get("negative", ""),
+            )
+        )
+    # Если модель вернула меньше, чем просили — добиваем дублем последнего
+    while len(keyframes) < n and keyframes:
+        keyframes.append(keyframes[-1])
+    scene.keyframes = keyframes
 
 
 def build_image_prompts(project: VideoProject) -> VideoProject:
@@ -47,10 +80,10 @@ def build_image_prompts(project: VideoProject) -> VideoProject:
     styles = _load_styles()
     style_pack = styles.get(project.style, styles["cinematic"])
     for scene in project.scenes:
-        user = _scene_context(scene, project, style_pack)
-        data = ask_json(system, user)
-        scene.image_prompt = data["image_prompt"]
-        scene.image_negative = data.get("image_negative", "")
+        n = _resolve_keyframes_count(scene, project)
+        ctx = _scene_context(scene, project, style_pack)
+        data = ask_json(system, _image_user(scene, ctx, n))
+        _ingest_keyframes(scene, data, n)
     return project
 
 
@@ -59,10 +92,10 @@ async def build_image_prompts_async(project: VideoProject) -> VideoProject:
     styles = _load_styles()
     style_pack = styles.get(project.style, styles["cinematic"])
     for scene in project.scenes:
-        user = _scene_context(scene, project, style_pack)
-        data = await ask_json_async(system, user)
-        scene.image_prompt = data["image_prompt"]
-        scene.image_negative = data.get("image_negative", "")
+        n = _resolve_keyframes_count(scene, project)
+        ctx = _scene_context(scene, project, style_pack)
+        data = await ask_json_async(system, _image_user(scene, ctx, n))
+        _ingest_keyframes(scene, data, n)
     return project
 
 
