@@ -63,7 +63,11 @@ async def _ask_subscription_async(system: str, user: str) -> str:
         system_prompt=system,
         model=MODEL,
         max_turns=1,
-        permission_mode="bypassPermissions",
+        # permission_mode НЕ ставим: bypassPermissions передаёт claude CLI
+        # флаг --dangerously-skip-permissions, который CLI запрещает под root
+        # (а наш systemd-сервис запускается от root). Нам этот режим и не
+        # нужен — мы не вызываем никаких инструментов (allowed_tools=[]),
+        # значит и обходить нечего.
         allowed_tools=[],
         extra_args={
             # CLI принимает только "enabled" / "adaptive" / "disabled".
