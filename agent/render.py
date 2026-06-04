@@ -81,6 +81,43 @@ def render_markdown(project: VideoProject) -> str:
     return "\n".join(lines)
 
 
+def render_script_preview(project) -> list[str]:
+    """
+    Развёрнутый сценарий на языке проекта — для показа в Telegram до
+    того как пойдут промты для Grok. Возвращает список сообщений
+    (один header + по одному на сцену).
+    """
+    messages = []
+    head = [
+        f"📖 *Сценарий: {project.title}*",
+        "",
+        f"👤 *Главный герой:* {project.character_anchor}",
+    ]
+    if project.voice_notes:
+        head.append(f"🔊 *Голос:* {project.voice_notes}")
+    head += ["", f"📋 *Всего сцен:* {len(project.scenes)}"]
+    messages.append("\n".join(head))
+
+    for s in project.scenes:
+        parts = [
+            f"🎬 *Сцена {s.number}/{len(project.scenes)}:* {s.summary}",
+            "",
+            f"👁 *В кадре:* {s.subject}",
+            f"🎭 *Действие:* {s.action}",
+            f"📷 *Камера:* {s.camera}",
+            f"🏞 *Где:* {s.setting}",
+            f"💡 *Свет:* {s.lighting}",
+            f"💫 *Настроение:* {s.mood}",
+        ]
+        if s.dialogue:
+            parts += ["", "💬 *Реплики:*"]
+            for d in s.dialogue:
+                emo = f" ({d.emotion})" if d.emotion else ""
+                parts.append(f"• *{d.speaker}*{emo}: {d.text}")
+        messages.append("\n".join(parts))
+    return messages
+
+
 def render_scene_brief(scene, total: int) -> str:
     """Краткий блок для одной сцены, в телеграм."""
     parts = [

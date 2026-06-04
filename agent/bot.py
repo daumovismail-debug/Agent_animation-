@@ -41,7 +41,7 @@ from .clarify import plan_questions_async
 from .script import generate_script_async
 from .prompt_builder import build_image_prompts_async, build_animation_prompts_async
 from .dialogue import regenerate_scene_dialogue, parse_user_dialogue, format_dialogue_block
-from .render import render_markdown, render_scene_brief, slugify
+from .render import render_markdown, render_scene_brief, render_script_preview, slugify
 from .models import VideoProject
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -293,8 +293,11 @@ async def run_generation(message: Message, st: ChatState):
             f"#{s.number}:{s.suggested_keyframes if st.keyframes=='auto' else st.keyframes}"
             for s in project.scenes
         )
+        # Показываем развёрнутый сценарий — каждая сцена отдельным
+        # сообщением, на языке проекта.
+        for chunk in render_script_preview(project):
+            await message.answer(chunk)
         await message.answer(
-            f"🎬 «{project.title}» — {len(project.scenes)} сцен.\n"
             f"🖼 Кадров по сценам: {kf_summary}"
         )
 
