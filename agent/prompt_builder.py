@@ -56,12 +56,20 @@ def _image_user(scene, ctx, n: int) -> str:
     return f"{ctx}Number of keyframes to generate (N): {n}\n"
 
 
-def _animation_user(scene, ctx, duration, aspect) -> str:
+def _animation_user(scene, ctx, duration, aspect, project=None) -> str:
     kf_block = "Keyframes:\n" + "\n".join(
         f"  - [{k.label}] {k.prompt}" for k in scene.keyframes
     )
+    lang_block = ""
+    if project and project.language and project.language != "auto":
+        lang_block = (
+            f"Dialogue language: {project.language}. If the scene has dialogue, "
+            f"mention native lip articulation for this language in the motion "
+            f"prompt.\n"
+        )
     return (
         f"{ctx}{kf_block}\n"
+        f"{lang_block}"
         f"Target duration: {duration} sec\n"
         f"Aspect ratio: {aspect}\n"
     )
@@ -122,12 +130,13 @@ def build_animation_prompts(
     style_pack = styles.get(project.style, styles["cinematic"])
     for scene in project.scenes:
         ctx = _scene_context(scene, project, style_pack)
-        user = _animation_user(scene, ctx, duration, aspect)
+        user = _animation_user(scene, ctx, duration, aspect, project)
         data = ask_json(system, user)
         scene.animation_prompt = data["animation_prompt"]
         scene.animation_negative = data.get("animation_negative", "")
-        scene.duration_sec = int(data.get("duration_sec", duration))
-        scene.aspect_ratio = data.get("aspect_ratio", aspect)
+        # Пользовательские значения авторитетны
+        scene.duration_sec = duration
+        scene.aspect_ratio = aspect
     return project
 
 
@@ -143,12 +152,12 @@ async def build_animation_prompts_async(
     async def one(scene):
         async with sem:
             ctx = _scene_context(scene, project, style_pack)
-            user = _animation_user(scene, ctx, duration, aspect)
+            user = _animation_user(scene, ctx, duration, aspect, project)
             data = await ask_json_async(system, user)
             scene.animation_prompt = data["animation_prompt"]
             scene.animation_negative = data.get("animation_negative", "")
-            scene.duration_sec = int(data.get("duration_sec", duration))
-            scene.aspect_ratio = data.get("aspect_ratio", aspect)
+            scene.duration_sec = duration
+            scene.aspect_ratio = aspect
 
     await asyncio.gather(*(one(s) for s in project.scenes))
     return project

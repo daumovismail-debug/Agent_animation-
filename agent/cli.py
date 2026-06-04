@@ -31,6 +31,19 @@ def main(argv=None):
         choices=["auto", "1", "2", "3"],
         help="Сколько ключевых кадров на сцену. auto = Claude решает сам.",
     )
+    parser.add_argument(
+        "--language",
+        default="auto",
+        choices=["auto", "ru", "en", "kk"],
+        help="Язык реплик. auto = Claude определит по идее.",
+    )
+    parser.add_argument(
+        "--dialogue",
+        default="auto",
+        choices=["auto", "manual", "off"],
+        help="Режим диалогов. manual в CLI работает как auto (ручная "
+        "правка реализована только в Telegram-боте).",
+    )
     parser.add_argument("--out", default="output", help="Папка для результатов")
     parser.add_argument(
         "--no-questions",
@@ -59,6 +72,8 @@ def main(argv=None):
         is_dialogue_heavy=is_dialogue_heavy,
         clarifications=clarifications,
         keyframes_mode=args.keyframes,
+        language=args.language,
+        dialogue_mode=args.dialogue,
     )
     print(f"      «{project.title}» — {len(project.scenes)} сцен")
 

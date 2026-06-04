@@ -40,6 +40,7 @@ from .llm import backend_info
 from .clarify import plan_questions_async
 from .script import generate_script_async
 from .prompt_builder import build_image_prompts_async, build_animation_prompts_async
+from .dialogue import regenerate_scene_dialogue, parse_user_dialogue, format_dialogue_block
 from .render import render_markdown, render_scene_brief, slugify
 from .models import VideoProject
 
@@ -49,11 +50,16 @@ log = logging.getLogger("bot")
 STYLES = ["cinematic", "anime", "3d", "realistic", "cartoon"]
 ASPECTS = ["16:9", "9:16", "1:1"]
 KEYFRAMES = ["auto", "1", "2", "3"]
+LANGUAGES = ["auto", "ru", "en", "kk"]
+DIALOGUE_MODES = ["auto", "manual", "off"]
+
+_LANG_LABEL = {"auto": "авто", "ru": "🇷🇺 ru", "en": "🇬🇧 en", "kk": "🇰🇿 kk"}
+_DLG_LABEL = {"auto": "🤖 авто", "manual": "✏ ручные", "off": "🔕 без реплик"}
 
 
 @dataclass
 class ChatState:
-    # Этап: "idle" | "setup" | "clarify"
+    # Этап: "idle" | "setup" | "clarify" | "dialogue_review"
     stage: str = "idle"
     idea: Optional[str] = None
     style: str = "cinematic"
@@ -61,6 +67,8 @@ class ChatState:
     duration: int = 6
     aspect: str = "16:9"
     keyframes: str = "auto"
+    language: str = "auto"
+    dialogue_mode: str = "auto"
     plan: Optional[dict] = None
     questions: list = field(default_factory=list)
     q_index: int = 0
@@ -69,6 +77,10 @@ class ChatState:
     awaiting_custom_answer: bool = False
     busy: bool = False
     setup_message_id: Optional[int] = None
+    # Стадия ручного редактирования реплик
+    project: Optional[VideoProject] = None
+    dlg_index: int = 0
+    awaiting_dialogue_text: bool = False
 
 
 STATES: dict[int, ChatState] = {}
@@ -129,11 +141,37 @@ def kb_setup(st: ChatState) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="＋", callback_data="inc:duration"),
         ],
         [
+            InlineKeyboardButton(
+                text=f"🌐 Язык: {_LANG_LABEL.get(st.language, st.language)}",
+                callback_data="cyc:language",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"💬 Диалоги: {_DLG_LABEL.get(st.dialogue_mode, st.dialogue_mode)}",
+                callback_data="cyc:dialogue",
+            )
+        ],
+        [
             InlineKeyboardButton(text="🚀 Поехали", callback_data="go"),
             InlineKeyboardButton(text="❌ Отменить", callback_data="cancel"),
         ],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_dialogue_review(scene_number: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ оставить", callback_data=f"dlg:keep:{scene_number}"),
+            InlineKeyboardButton(text="🔁 перегенерить", callback_data=f"dlg:regen:{scene_number}"),
+        ],
+        [
+            InlineKeyboardButton(text="✏ написать самому", callback_data=f"dlg:edit:{scene_number}"),
+            InlineKeyboardButton(text="🗑 убрать", callback_data=f"dlg:drop:{scene_number}"),
+        ],
+        [InlineKeyboardButton(text="❌ отменить весь проект", callback_data="cancel")],
+    ])
 
 
 def kb_suggestions(q_index: int, suggestions: list) -> InlineKeyboardMarkup:
@@ -228,6 +266,8 @@ async def record_answer(message: Message, st: ChatState, answer: str):
 
 
 async def run_generation(message: Message, st: ChatState):
+    """Шаг 1: написать сценарий. Дальше либо ручное редактирование диалогов,
+    либо сразу промты."""
     if st.busy:
         await message.answer("⏳ Уже работаю над предыдущим запросом.")
         return
@@ -235,7 +275,8 @@ async def run_generation(message: Message, st: ChatState):
     try:
         await message.answer(
             f"📝 Пишу сценарий ({st.scenes_count} сцен, стиль *{st.style}*, "
-            f"кадров: *{st.keyframes}*)…"
+            f"кадров: *{st.keyframes}*, язык: *{st.language}*, "
+            f"диалоги: *{st.dialogue_mode}*)…"
         )
         project = await generate_script_async(
             idea=st.idea,
@@ -244,23 +285,85 @@ async def run_generation(message: Message, st: ChatState):
             is_dialogue_heavy=st.is_dialogue_heavy,
             clarifications=st.answers,
             keyframes_mode=st.keyframes,
+            language=st.language,
+            dialogue_mode=st.dialogue_mode,
         )
+        st.project = project
         kf_summary = ", ".join(
             f"#{s.number}:{s.suggested_keyframes if st.keyframes=='auto' else st.keyframes}"
             for s in project.scenes
         )
         await message.answer(
             f"🎬 «{project.title}» — {len(project.scenes)} сцен.\n"
-            f"🖼 Кадров по сценам: {kf_summary}\n"
-            f"Генерирую промты для картинок…"
+            f"🖼 Кадров по сценам: {kf_summary}"
         )
+
+        # Manual dialogue: пройти по сценам с репликами
+        if st.dialogue_mode == "manual" and any(s.dialogue for s in project.scenes):
+            st.busy = False  # отпускаем — это интерактив, не работа
+            st.stage = "dialogue_review"
+            st.dlg_index = 0
+            await message.answer(
+                "✏ Сейчас пройдёмся по сценам с репликами. По каждой "
+                "выбери: оставить как написал Claude, перегенерить, "
+                "написать самому или убрать."
+            )
+            await show_dialogue_review(message, st)
+            return
+
+        await run_prompts_generation(message, st)
+    except Exception as e:
+        log.exception("generation failed")
+        await message.answer(f"❌ Ошибка: `{type(e).__name__}: {e}`")
+        st.busy = False
+        reset(message.chat.id)
+
+
+async def show_dialogue_review(message: Message, st: ChatState):
+    """Показывает реплики следующей сцены с кнопками."""
+    project = st.project
+    if not project:
+        reset(message.chat.id)
+        return
+
+    # Найти следующую сцену с диалогом
+    scenes = project.scenes
+    while st.dlg_index < len(scenes) and not scenes[st.dlg_index].dialogue:
+        st.dlg_index += 1
+
+    if st.dlg_index >= len(scenes):
+        await message.answer("✅ Все реплики собраны — генерирую промты.")
+        st.busy = True
+        try:
+            await run_prompts_generation(message, st)
+        except Exception as e:
+            log.exception("prompts generation failed")
+            await message.answer(f"❌ Ошибка: `{type(e).__name__}: {e}`")
+            st.busy = False
+            reset(message.chat.id)
+        return
+
+    scene = scenes[st.dlg_index]
+    text = (
+        f"🎬 Сцена {scene.number}/{len(scenes)}: {scene.summary}\n\n"
+        f"💬 Реплики:\n{format_dialogue_block(scene)}"
+    )
+    await message.answer(text, reply_markup=kb_dialogue_review(scene.number))
+
+
+async def run_prompts_generation(message: Message, st: ChatState):
+    """Шаг 2: image-промты, потом animation-промты, потом выгрузка."""
+    project = st.project
+    if not project:
+        reset(message.chat.id)
+        return
+    st.busy = True
+    try:
+        await message.answer("🖼 Генерирую промты для картинок…")
         await build_image_prompts_async(project)
         await message.answer("🎞 Генерирую промты для анимации…")
         await build_animation_prompts_async(project, st.duration, st.aspect)
         await send_result(message, project)
-    except Exception as e:
-        log.exception("generation failed")
-        await message.answer(f"❌ Ошибка: `{type(e).__name__}: {e}`")
     finally:
         st.busy = False
         reset(message.chat.id)
@@ -333,6 +436,10 @@ def register(dp: Dispatcher):
             st.aspect = _cycle(ASPECTS, st.aspect)
         elif what == "keyframes":
             st.keyframes = _cycle(KEYFRAMES, st.keyframes)
+        elif what == "language":
+            st.language = _cycle(LANGUAGES, st.language)
+        elif what == "dialogue":
+            st.dialogue_mode = _cycle(DIALOGUE_MODES, st.dialogue_mode)
         await refresh_setup(cb, st)
         await cb.answer()
 
@@ -401,6 +508,57 @@ def register(dp: Dispatcher):
             await cb.message.answer("✏ Напиши свой ответ сообщением.")
         await cb.answer()
 
+    @dp.callback_query(F.data.startswith("dlg:"))
+    async def cb_dialogue(cb: types.CallbackQuery):
+        st = state_for(cb.message.chat.id)
+        if st.stage != "dialogue_review" or not st.project:
+            await cb.answer()
+            return
+        try:
+            _, action, scene_num_str = cb.data.split(":")
+            scene_num = int(scene_num_str)
+        except Exception:
+            await cb.answer()
+            return
+        scene = next((s for s in st.project.scenes if s.number == scene_num), None)
+        if scene is None:
+            await cb.answer()
+            return
+
+        if action == "keep":
+            await cb.message.answer("✅ Оставил как есть.")
+            st.dlg_index += 1
+            await cb.answer()
+            await show_dialogue_review(cb.message, st)
+        elif action == "drop":
+            scene.dialogue = []
+            await cb.message.answer("🗑 Реплики убраны.")
+            st.dlg_index += 1
+            await cb.answer()
+            await show_dialogue_review(cb.message, st)
+        elif action == "edit":
+            st.awaiting_dialogue_text = True
+            await cb.message.answer(
+                "✏ Напиши реплики в формате:\n"
+                "`Имя: реплика`\n"
+                "`Имя (эмоция): реплика`\n\n"
+                "Одна строка = одна реплика."
+            )
+            await cb.answer()
+        elif action == "regen":
+            await cb.message.answer("🔁 Перегенерирую реплики…")
+            await cb.answer()
+            try:
+                new_dlg = await regenerate_scene_dialogue(st.project, scene)
+                scene.dialogue = new_dlg
+                await cb.message.answer(
+                    f"💬 Новый вариант:\n{format_dialogue_block(scene)}",
+                    reply_markup=kb_dialogue_review(scene.number),
+                )
+            except Exception as e:
+                log.exception("regen failed")
+                await cb.message.answer(f"❌ Не получилось перегенерить: {e}")
+
     @dp.message(F.text)
     async def on_text(message: Message):
         await handle_text(message, message.text.strip())
@@ -411,6 +569,30 @@ async def handle_text(message: Message, text: str):
 
     if st.busy:
         await message.answer("⏳ Подожди, идёт генерация.")
+        return
+
+    # Ручной ввод реплик в стадии диалогов
+    if st.stage == "dialogue_review" and st.awaiting_dialogue_text and st.project:
+        if not text:
+            return
+        scenes = st.project.scenes
+        if st.dlg_index >= len(scenes):
+            st.awaiting_dialogue_text = False
+            return
+        scene = scenes[st.dlg_index]
+        parsed = parse_user_dialogue(text)
+        if not parsed:
+            await message.answer(
+                "Не смог распарсить. Попробуй формат `Имя: реплика`."
+            )
+            return
+        scene.dialogue = parsed
+        st.awaiting_dialogue_text = False
+        await message.answer(
+            f"✅ Принял:\n{format_dialogue_block(scene)}"
+        )
+        st.dlg_index += 1
+        await show_dialogue_review(message, st)
         return
 
     # Если ждём ответ на вопрос — записываем

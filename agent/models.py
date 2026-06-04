@@ -58,6 +58,12 @@ class VideoProject:
     voice_notes: str = ""
     # "auto" | "1" | "2" | "3" — настройка пользователя
     keyframes_mode: str = "auto"
+    # "auto" | "ru" | "en" | "kk" — язык реплик
+    language: str = "auto"
+    # "auto" — Claude сам пишет реплики в сценарии
+    # "manual" — пользователь сам выбирает per-scene (Claude / ввод / пропуск)
+    # "off" — никаких реплик
+    dialogue_mode: str = "auto"
     scenes: List[Scene] = field(default_factory=list)
     clarifications: dict = field(default_factory=dict)
 
@@ -70,6 +76,8 @@ class VideoProject:
             "is_dialogue_heavy": self.is_dialogue_heavy,
             "voice_notes": self.voice_notes,
             "keyframes_mode": self.keyframes_mode,
+            "language": self.language,
+            "dialogue_mode": self.dialogue_mode,
             "clarifications": self.clarifications,
             "scenes": [s.to_dict() for s in self.scenes],
         }
