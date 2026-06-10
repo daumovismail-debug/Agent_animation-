@@ -1,0 +1,20 @@
+[Unit]
+Description=PixarGen Next.js Frontend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Agent_animation/frontend
+Environment=HOME=/root
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
