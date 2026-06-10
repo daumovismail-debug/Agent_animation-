@@ -8,20 +8,41 @@
 2. Anthropic SDK (anthropic) — fallback, биллинг с API-ключа из
    ANTHROPIC_API_KEY. Используется, если SDK подписки недоступен.
 
-В обоих случаях модель — claude-opus-4-7 с extended thinking high.
+В обоих случаях модель — claude-opus-4-8 с extended thinking high.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
+from pathlib import Path
 
-MODEL = "claude-opus-4-7"
+MODEL = "claude-opus-4-8"
 # "high" thinking budget — даём модели запас на размышление перед ответом
 THINKING_BUDGET = 16000
 MAX_TOKENS = 24000  # должно быть > THINKING_BUDGET + полезного ответа
+MAX_JSON_RETRIES = 3
+
+# ───────────────────────────── Логирование ──────────────────────────────────
+
+_log = logging.getLogger("agent.llm")
+
+_usage_log_path = Path(__file__).parent.parent / "agent_usage.log"
+_usage_logger = logging.getLogger("agent.usage")
+if not _usage_logger.handlers:
+    _usage_handler = logging.FileHandler(_usage_log_path, encoding="utf-8")
+    _usage_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    _usage_logger.addHandler(_usage_handler)
+    _usage_logger.setLevel(logging.INFO)
+    _usage_logger.propagate = False
+
+
+def _log_usage(label: str, input_tokens: int, output_tokens: int) -> None:
+    _usage_logger.info("%s  in=%d out=%d total=%d", label, input_tokens, output_tokens,
+                       input_tokens + output_tokens)
 
 
 def _strip_fences(text: str) -> str:
@@ -117,7 +138,8 @@ def _ask_api_key(system: str, user: str) -> str:
         thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
         messages=[{"role": "user", "content": user}],
     )
-    # Собираем только текстовые блоки, пропускаем thinking
+    if hasattr(msg, "usage"):
+        _log_usage("api-key", msg.usage.input_tokens, msg.usage.output_tokens)
     parts: list[str] = []
     for block in msg.content:
         if getattr(block, "type", None) == "text":
@@ -135,17 +157,30 @@ def _backend_name() -> str:
 
 
 def ask_text(system: str, user: str) -> str:
-    """Текстовый ответ от Claude. Опус 4.7 с extended thinking high."""
+    """Текстовый ответ от Claude. Opus 4.8 с extended thinking."""
     backend = _backend_name()
     if backend == "subscription":
+        _log_usage("subscription", 0, 0)  # токены недоступны через SDK
         return _ask_subscription(system, user)
     return _ask_api_key(system, user)
 
 
 def ask_json(system: str, user: str) -> dict:
-    """Просит Claude вернуть JSON и парсит его."""
-    text = ask_text(system, user)
-    return _parse_json(text)
+    """Просит Claude вернуть JSON. До 3 попыток с авто-починкой при ошибке парсинга."""
+    last_exc: Exception | None = None
+    extra = ""
+    for attempt in range(MAX_JSON_RETRIES):
+        try:
+            text = ask_text(system, user + extra)
+            return _parse_json(text)
+        except Exception as exc:
+            last_exc = exc
+            _log.warning("JSON parse failed (attempt %d/%d): %s", attempt + 1, MAX_JSON_RETRIES, exc)
+            extra = (
+                "\n\nIMPORTANT: Your previous response could not be parsed as JSON. "
+                "Return ONLY valid JSON — no explanations, no markdown fences, no extra text."
+            )
+    raise last_exc  # type: ignore[misc]
 
 
 async def _ask_api_key_async(system: str, user: str) -> str:
@@ -163,6 +198,8 @@ async def _ask_api_key_async(system: str, user: str) -> str:
         thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
         messages=[{"role": "user", "content": user}],
     )
+    if hasattr(msg, "usage"):
+        _log_usage("api-key-async", msg.usage.input_tokens, msg.usage.output_tokens)
     parts: list[str] = []
     for block in msg.content:
         if getattr(block, "type", None) == "text":
@@ -174,13 +211,28 @@ async def ask_text_async(system: str, user: str) -> str:
     """Async-версия для использования внутри event loop (например, телеграм-бота)."""
     backend = _backend_name()
     if backend == "subscription":
+        _log_usage("subscription-async", 0, 0)
         return await _ask_subscription_async(system, user)
     return await _ask_api_key_async(system, user)
 
 
 async def ask_json_async(system: str, user: str) -> dict:
-    text = await ask_text_async(system, user)
-    return _parse_json(text)
+    """Async-версия ask_json. До 3 попыток с авто-починкой при ошибке парсинга."""
+    last_exc: Exception | None = None
+    extra = ""
+    for attempt in range(MAX_JSON_RETRIES):
+        try:
+            text = await ask_text_async(system, user + extra)
+            return _parse_json(text)
+        except Exception as exc:
+            last_exc = exc
+            _log.warning("JSON parse failed async (attempt %d/%d): %s",
+                         attempt + 1, MAX_JSON_RETRIES, exc)
+            extra = (
+                "\n\nIMPORTANT: Your previous response could not be parsed as JSON. "
+                "Return ONLY valid JSON — no explanations, no markdown fences, no extra text."
+            )
+    raise last_exc  # type: ignore[misc]
 
 
 def backend_info() -> str:

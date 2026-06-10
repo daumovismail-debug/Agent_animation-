@@ -1,9 +1,12 @@
 import asyncio
 import json
+import logging
 import os
 from pathlib import Path
 from .llm import ask_json, ask_json_async
 from .models import VideoProject, Keyframe
+
+_log = logging.getLogger("agent.prompt_builder")
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
@@ -75,7 +78,8 @@ def _animation_user(scene, ctx, duration, aspect, project=None) -> str:
     )
 
 
-def _ingest_keyframes(scene, data, n: int):
+def _ingest_keyframes(scene, data: dict, n: int) -> bool:
+    """Записывает кадры из ответа модели. Возвращает True если получено ровно n кадров."""
     raw = data.get("keyframes", [])
     keyframes = []
     for item in raw[:n]:
@@ -86,10 +90,8 @@ def _ingest_keyframes(scene, data, n: int):
                 negative=item.get("negative", ""),
             )
         )
-    # Если модель вернула меньше, чем просили — добиваем дублем последнего
-    while len(keyframes) < n and keyframes:
-        keyframes.append(keyframes[-1])
     scene.keyframes = keyframes
+    return len(keyframes) == n
 
 
 def build_image_prompts(project: VideoProject) -> VideoProject:
@@ -99,8 +101,22 @@ def build_image_prompts(project: VideoProject) -> VideoProject:
     for scene in project.scenes:
         n = _resolve_keyframes_count(scene, project)
         ctx = _scene_context(scene, project, style_pack)
-        data = ask_json(system, _image_user(scene, ctx, n))
-        _ingest_keyframes(scene, data, n)
+        user_msg = _image_user(scene, ctx, n)
+        for attempt in range(3):
+            data = ask_json(system, user_msg)
+            got = len(data.get("keyframes", []))
+            if _ingest_keyframes(scene, data, n):
+                break
+            if attempt < 2:
+                _log.warning("Scene %d: got %d/%d keyframes, retrying (%d/3)",
+                             scene.number, got, n, attempt + 2)
+                user_msg = (
+                    _image_user(scene, ctx, n) +
+                    f"\nPREVIOUS ATTEMPT RETURNED {got} KEYFRAMES INSTEAD OF {n}. "
+                    f"The 'keyframes' array MUST contain exactly {n} objects."
+                )
+        else:
+            _log.error("Scene %d: could not get %d keyframes after 3 attempts", scene.number, n)
     return project
 
 
@@ -115,10 +131,26 @@ async def build_image_prompts_async(project: VideoProject) -> VideoProject:
         async with sem:
             n = _resolve_keyframes_count(scene, project)
             ctx = _scene_context(scene, project, style_pack)
-            data = await ask_json_async(system, _image_user(scene, ctx, n))
-            _ingest_keyframes(scene, data, n)
+            user_msg = _image_user(scene, ctx, n)
+            for attempt in range(3):
+                data = await ask_json_async(system, user_msg)
+                got = len(data.get("keyframes", []))
+                if _ingest_keyframes(scene, data, n):
+                    return
+                if attempt < 2:
+                    _log.warning("Scene %d: got %d/%d keyframes, retrying (%d/3)",
+                                 scene.number, got, n, attempt + 2)
+                    user_msg = (
+                        _image_user(scene, ctx, n) +
+                        f"\nPREVIOUS ATTEMPT RETURNED {got} KEYFRAMES INSTEAD OF {n}. "
+                        f"The 'keyframes' array MUST contain exactly {n} objects."
+                    )
+            _log.error("Scene %d: could not get %d keyframes after 3 attempts", scene.number, n)
 
-    await asyncio.gather(*(one(s) for s in project.scenes))
+    results = await asyncio.gather(*(one(s) for s in project.scenes), return_exceptions=True)
+    for scene, result in zip(project.scenes, results):
+        if isinstance(result, Exception):
+            _log.error("Scene %d image prompts failed: %s", scene.number, result)
     return project
 
 
@@ -134,7 +166,6 @@ def build_animation_prompts(
         data = ask_json(system, user)
         scene.animation_prompt = data["animation_prompt"]
         scene.animation_negative = data.get("animation_negative", "")
-        # Пользовательские значения авторитетны
         scene.duration_sec = duration
         scene.aspect_ratio = aspect
     return project
@@ -159,5 +190,8 @@ async def build_animation_prompts_async(
             scene.duration_sec = duration
             scene.aspect_ratio = aspect
 
-    await asyncio.gather(*(one(s) for s in project.scenes))
+    results = await asyncio.gather(*(one(s) for s in project.scenes), return_exceptions=True)
+    for scene, result in zip(project.scenes, results):
+        if isinstance(result, Exception):
+            _log.error("Scene %d animation prompts failed: %s", scene.number, result)
     return project
