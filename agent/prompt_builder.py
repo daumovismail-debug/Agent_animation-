@@ -22,9 +22,9 @@ def _load_styles() -> dict:
     return json.loads((PROMPTS_DIR / "styles.json").read_text(encoding="utf-8"))
 
 
-def _scene_context(scene, project, style_pack) -> str:
+def _scene_context(scene, project, style_pack, include_dialogue: bool = True) -> str:
     dlg_block = ""
-    if scene.dialogue:
+    if include_dialogue and scene.dialogue:
         lines = [
             f"  - {d.speaker} ({d.emotion}): {d.text}" for d in scene.dialogue
         ]
@@ -100,7 +100,7 @@ def build_image_prompts(project: VideoProject) -> VideoProject:
     style_pack = styles.get(project.style, styles["cinematic"])
     for scene in project.scenes:
         n = _resolve_keyframes_count(scene, project)
-        ctx = _scene_context(scene, project, style_pack)
+        ctx = _scene_context(scene, project, style_pack, include_dialogue=False)
         user_msg = _image_user(scene, ctx, n)
         for attempt in range(3):
             data = ask_json(system, user_msg)
@@ -130,7 +130,7 @@ async def build_image_prompts_async(project: VideoProject) -> VideoProject:
     async def one(scene):
         async with sem:
             n = _resolve_keyframes_count(scene, project)
-            ctx = _scene_context(scene, project, style_pack)
+            ctx = _scene_context(scene, project, style_pack, include_dialogue=False)
             user_msg = _image_user(scene, ctx, n)
             for attempt in range(3):
                 data = await ask_json_async(system, user_msg)

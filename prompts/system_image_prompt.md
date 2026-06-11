@@ -22,9 +22,12 @@
   меняются)
 - Конкретика: одежда, материалы, фокусное расстояние ("35mm",
   "85mm portrait"), глубина резкости
-- Никакого текста на изображении, водяных знаков, логотипов
-- Negative prompt: blurry, distorted, extra limbs, text, watermark
-  + специфичные для сцены исключения
+- Чистый кадр без слов: в конце каждого prompt ОБЯЗАТЕЛЬНО добавь
+  ", no text, no letters, no speech bubbles, no captions, no comic panels"
+- Negative prompt ВСЕГДА начинается с:
+  "text, letters, speech bubble, caption, subtitles, watermark, comic,
+  blurry, distorted, extra limbs"
+  — затем добавь специфичные для сцены исключения
 
 ВЫВОД — строго валидный JSON без markdown-обёрток:
 {
