@@ -68,6 +68,8 @@ class Scene:
     setting: str
     lighting: str
     mood: str
+    # "hook" | "development" | "cliffhanger"
+    dramatic_role: str = ""
     # Claude-рекомендация сколько кадров надо именно этой сцене (1..3)
     suggested_keyframes: int = 1
     # Сгенерированные кадры (1, 2 или 3 штуки)

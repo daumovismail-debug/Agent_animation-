@@ -46,6 +46,9 @@ def _build_project(data, idea, style, is_dialogue_heavy, clarifications,
         ]
         sk = int(s.get("suggested_keyframes", 1) or 1)
         sk = max(1, min(3, sk))
+        raw_role = s.get("dramatic_role", "").strip().lower()
+        if raw_role not in ("hook", "development", "cliffhanger"):
+            raw_role = ""
         scenes.append(
             Scene(
                 number=s["number"],
@@ -56,6 +59,7 @@ def _build_project(data, idea, style, is_dialogue_heavy, clarifications,
                 setting=s["setting"],
                 lighting=s["lighting"],
                 mood=s["mood"],
+                dramatic_role=raw_role,
                 suggested_keyframes=sk,
                 dialogue=dlg,
             )
