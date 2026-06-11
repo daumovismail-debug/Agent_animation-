@@ -36,6 +36,7 @@ PAUSE = 3
 IMAGE_MODEL = "xai/grok-imagine-image-quality"      # для openclaw CLI
 IMAGE_DIRECT_MODEL = "grok-imagine-image-quality"   # для прямого xAI API
 VIDEO_MODEL = "grok-imagine-video"
+VIDEO_MODEL_AUDIO = "grok-imagine-video-1.5-preview"
 XAI_BASE_URL = "https://api.x.ai/v1"
 AGENT_SQLITE = Path.home() / ".openclaw/agents/main/agent/openclaw-agent.sqlite"
 XAI_OAUTH_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
@@ -290,6 +291,7 @@ def xai_image_to_video(
     aspect_ratio: str = "16:9",
     duration: int = 6,
     resolution: str = "480p",
+    with_audio: bool = False,
 ) -> bool:
     # Определяем mime по байтам файла, а не по расширению (2k-картинки — PNG)
     raw_img = image_path.read_bytes()
@@ -297,16 +299,19 @@ def xai_image_to_video(
     b64 = base64.b64encode(raw_img).decode()
     data_url = f"data:{mime};base64,{b64}"
 
+    model = VIDEO_MODEL_AUDIO if with_audio else VIDEO_MODEL
     body = {
-        "model": VIDEO_MODEL,
+        "model": model,
         "prompt": prompt,
         "image": {"url": data_url},
         "duration": duration,
         "aspect_ratio": aspect_ratio,
         "resolution": resolution,
     }
+    if with_audio:
+        body["audio"] = True
 
-    log.info("xAI API: POST /videos/generations ...")
+    log.info("xAI API: POST /videos/generations model=%s audio=%s ...", model, with_audio)
     try:
         resp = _xai_request("POST", "/videos/generations", token, body)
     except Exception as e:
@@ -365,6 +370,7 @@ def render_scene(
     image_resolution: str | None = None,
     image_only: bool = False,
     video_only: bool = False,
+    with_audio: bool = False,
 ) -> bool:
     n = scene["number"]
     img_path = render_dir / f"scene_{n}{suffix}.jpg"
@@ -386,6 +392,12 @@ def render_scene(
 
     aspect = scene.get("aspect_ratio", "16:9")
     duration = int(scene.get("duration_sec", 6))
+
+    raw_dialogue = scene.get("dialogue")
+    has_dialogue = bool(raw_dialogue) if not isinstance(raw_dialogue, str) else bool(raw_dialogue.strip())
+    use_audio = with_audio and has_dialogue
+    if with_audio and not use_audio:
+        log.info("Сцена %d: --audio задан, но нет dialogue — генерирую видео без звука", n)
 
     # Шаг 1: картинка
     if not video_only:
@@ -455,6 +467,7 @@ def render_scene(
         aspect_ratio=aspect,
         duration=min(duration, 15),
         resolution=video_resolution,
+        with_audio=use_audio,
     )
     if not ok:
         log.error("Сцена %d: ошибка генерации видео, пропускаю сцену", n)
@@ -532,6 +545,8 @@ def main():
     )
     parser.add_argument("--step", action="store_true",
                         help="Сначала подтвердить все картинки, потом генерировать видео")
+    parser.add_argument("--audio", action="store_true",
+                        help="Использовать grok-imagine-video-1.5-preview + audio:true для сцен с dialogue (улучшенное качество звука и привязка к репликам; без флага — обычная модель, тоже генерирует звук)")
     args = parser.parse_args()
 
     q = QUALITY[args.quality]
@@ -608,6 +623,7 @@ def main():
                     video_resolution=video_resolution,
                     image_resolution=image_resolution,
                     image_only=True,
+                    with_audio=args.audio,
                 )
                 if not ok:
                     log.error("Сцена %d: пропускаю (ошибка генерации)", n)
@@ -633,6 +649,7 @@ def main():
                 video_resolution=video_resolution,
                 image_resolution=image_resolution,
                 video_only=True,
+                with_audio=args.audio,
             ):
                 ok_count += 1
             else:
@@ -648,6 +665,7 @@ def main():
                 suffix=suffix,
                 video_resolution=video_resolution,
                 image_resolution=image_resolution,
+                with_audio=args.audio,
             ):
                 ok_count += 1
             else:
