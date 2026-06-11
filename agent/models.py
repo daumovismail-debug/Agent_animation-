@@ -80,6 +80,7 @@ class Scene:
     dialogue: List[DialogueLine] = field(default_factory=list)
     duration_sec: int = 6
     aspect_ratio: str = "16:9"
+    timing_note: str = ""
 
     def to_dict(self):
         return asdict(self)

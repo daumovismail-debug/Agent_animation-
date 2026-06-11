@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from .llm import ask_json, ask_json_async
 from .models import VideoProject, Keyframe
+from .timing import advise_scene
 
 _log = logging.getLogger("agent.prompt_builder")
 
@@ -154,25 +155,46 @@ async def build_image_prompts_async(project: VideoProject) -> VideoProject:
     return project
 
 
+def _apply_timing(scene, default_duration: int) -> tuple[int, str]:
+    """Вернуть (per_scene_duration, timing_note) с учётом длины реплик."""
+    advice = advise_scene(scene, default_duration)
+    if advice is None:
+        return default_duration, ""
+    if advice.status == "long":
+        note = (
+            f"Реплики ~{advice.estimated_sec}с — длительность увеличена "
+            f"до {advice.recommended_duration}с"
+        )
+    else:
+        note = (
+            f"Реплики ~{advice.estimated_sec}с — рекомендуется разбить на "
+            f"{advice.split_count} клипа по {advice.recommended_duration}с"
+        )
+    return advice.recommended_duration, note
+
+
 def build_animation_prompts(
-    project: VideoProject, duration: int, aspect: str
+    project: VideoProject, duration: int, aspect: str, apply_timing: bool = True
 ) -> VideoProject:
     system = (PROMPTS_DIR / "system_animation_prompt.md").read_text(encoding="utf-8")
     styles = _load_styles()
     style_pack = styles.get(project.style, styles["3d"])
     for scene in project.scenes:
+        per_dur, note = _apply_timing(scene, duration) if apply_timing else (duration, "")
+        if note:
+            scene.timing_note = note
         ctx = _scene_context(scene, project, style_pack)
-        user = _animation_user(scene, ctx, duration, aspect, project)
+        user = _animation_user(scene, ctx, per_dur, aspect, project)
         data = ask_json(system, user)
         scene.animation_prompt = data["animation_prompt"]
         scene.animation_negative = data.get("animation_negative", "")
-        scene.duration_sec = duration
+        scene.duration_sec = per_dur
         scene.aspect_ratio = aspect
     return project
 
 
 async def build_animation_prompts_async(
-    project: VideoProject, duration: int, aspect: str
+    project: VideoProject, duration: int, aspect: str, apply_timing: bool = True
 ) -> VideoProject:
     """Сцены параллельно с лимитом _CONCURRENCY."""
     system = (PROMPTS_DIR / "system_animation_prompt.md").read_text(encoding="utf-8")
@@ -182,12 +204,15 @@ async def build_animation_prompts_async(
 
     async def one(scene):
         async with sem:
+            per_dur, note = _apply_timing(scene, duration) if apply_timing else (duration, "")
+            if note:
+                scene.timing_note = note
             ctx = _scene_context(scene, project, style_pack)
-            user = _animation_user(scene, ctx, duration, aspect, project)
+            user = _animation_user(scene, ctx, per_dur, aspect, project)
             data = await ask_json_async(system, user)
             scene.animation_prompt = data["animation_prompt"]
             scene.animation_negative = data.get("animation_negative", "")
-            scene.duration_sec = duration
+            scene.duration_sec = per_dur
             scene.aspect_ratio = aspect
 
     results = await asyncio.gather(*(one(s) for s in project.scenes), return_exceptions=True)

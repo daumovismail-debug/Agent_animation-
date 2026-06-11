@@ -43,6 +43,7 @@ from .prompt_builder import build_image_prompts_async, build_animation_prompts_a
 from .dialogue import regenerate_scene_dialogue, parse_user_dialogue, format_dialogue_block
 from .render import render_markdown, render_scene_brief, render_script_preview, slugify
 from .models import VideoProject
+from .timing import advise_project
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("bot")
@@ -59,7 +60,7 @@ _DLG_LABEL = {"auto": "🤖 авто", "manual": "✏ ручные", "off": "�
 
 @dataclass
 class ChatState:
-    # Этап: "idle" | "setup" | "clarify" | "dialogue_review"
+    # Этап: "idle" | "setup" | "clarify" | "timing_review" | "dialogue_review"
     stage: str = "idle"
     idea: Optional[str] = None
     style: str = "3d"
@@ -81,6 +82,9 @@ class ChatState:
     project: Optional[VideoProject] = None
     dlg_index: int = 0
     awaiting_dialogue_text: bool = False
+    # Тайминг
+    timing_advices: list = field(default_factory=list)
+    apply_timing: bool = True
 
 
 STATES: dict[int, ChatState] = {}
@@ -158,6 +162,20 @@ def kb_setup(st: ChatState) -> InlineKeyboardMarkup:
         ],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_timing_review() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Применить рекомендации", callback_data="timing:accept"
+            ),
+            InlineKeyboardButton(
+                text="⏭ Оставить как есть", callback_data="timing:skip"
+            ),
+        ],
+        [InlineKeyboardButton(text="❌ отменить проект", callback_data="cancel")],
+    ])
 
 
 def kb_dialogue_review(scene_number: int) -> InlineKeyboardMarkup:
@@ -265,6 +283,27 @@ async def record_answer(message: Message, st: ChatState, answer: str):
     await ask_next_question(message, st)
 
 
+def _fmt_timing_advices(advices: list, default_duration: int) -> str:
+    lines = ["⚠ *Тайминг реплик*\n"]
+    for a in advices:
+        if a.status == "long":
+            lines.append(
+                f"• Сцена {a.scene_number}: ~{a.estimated_sec}с речи "
+                f"→ длительность увеличится до *{a.recommended_duration}с*"
+            )
+        else:
+            lines.append(
+                f"• Сцена {a.scene_number}: ~{a.estimated_sec}с речи "
+                f"→ рекомендуется разбить на *{a.split_count} клипа* "
+                f"по {a.recommended_duration}с"
+            )
+    lines.append(
+        f"\n_Текущая длительность сцены: {default_duration}с_\n"
+        "Применить рекомендованные длительности?"
+    )
+    return "\n".join(lines)
+
+
 async def run_generation(message: Message, st: ChatState):
     """Шаг 1: написать сценарий. Дальше либо ручное редактирование диалогов,
     либо сразу промты."""
@@ -301,25 +340,46 @@ async def run_generation(message: Message, st: ChatState):
             f"🖼 Кадров по сценам: {kf_summary}"
         )
 
-        # Manual dialogue: пройти по сценам с репликами
-        if st.dialogue_mode == "manual" and any(s.dialogue for s in project.scenes):
-            st.busy = False  # отпускаем — это интерактив, не работа
-            st.stage = "dialogue_review"
-            st.dlg_index = 0
+        # Проверяем тайминг реплик
+        st.timing_advices = advise_project(project, st.duration)
+        if st.timing_advices:
+            st.busy = False
+            st.stage = "timing_review"
             await message.answer(
-                "✏ Сейчас пройдёмся по сценам с репликами. По каждой "
-                "выбери: оставить как написал Claude, перегенерить, "
-                "написать самому или убрать."
+                _fmt_timing_advices(st.timing_advices, st.duration),
+                reply_markup=kb_timing_review(),
             )
-            await show_dialogue_review(message, st)
             return
 
-        await run_prompts_generation(message, st)
+        await _after_timing_review(message, st)
     except Exception as e:
         log.exception("generation failed")
         await message.answer(f"❌ Ошибка: `{type(e).__name__}: {e}`")
         st.busy = False
         reset(message.chat.id)
+
+
+async def _after_timing_review(message: Message, st: ChatState):
+    """Переход после timing_review (или если timing не нужен) → dialogue_review → промты."""
+    project = st.project
+    if not project:
+        reset(message.chat.id)
+        return
+
+    # Manual dialogue: пройти по сценам с репликами
+    if st.dialogue_mode == "manual" and any(s.dialogue for s in project.scenes):
+        st.busy = False
+        st.stage = "dialogue_review"
+        st.dlg_index = 0
+        await message.answer(
+            "✏ Сейчас пройдёмся по сценам с репликами. По каждой "
+            "выбери: оставить как написал Claude, перегенерить, "
+            "написать самому или убрать."
+        )
+        await show_dialogue_review(message, st)
+        return
+
+    await run_prompts_generation(message, st)
 
 
 async def show_dialogue_review(message: Message, st: ChatState):
@@ -365,7 +425,9 @@ async def run_prompts_generation(message: Message, st: ChatState):
         await message.answer("🖼 Генерирую промты для картинок…")
         await build_image_prompts_async(project)
         await message.answer("🎞 Генерирую промты для анимации…")
-        await build_animation_prompts_async(project, st.duration, st.aspect)
+        await build_animation_prompts_async(
+            project, st.duration, st.aspect, apply_timing=st.apply_timing
+        )
         await send_result(message, project)
     finally:
         st.busy = False
@@ -519,6 +581,29 @@ def register(dp: Dispatcher):
             st.awaiting_custom_answer = True
             await cb.message.answer("✏ Напиши свой ответ сообщением.")
         await cb.answer()
+
+    @dp.callback_query(F.data.startswith("timing:"))
+    async def cb_timing(cb: types.CallbackQuery):
+        st = state_for(cb.message.chat.id)
+        if st.stage != "timing_review":
+            await cb.answer()
+            return
+        action = cb.data.split(":", 1)[1]
+        if action == "accept":
+            st.apply_timing = True
+            await cb.message.answer("✅ Длительности проблемных сцен будут скорректированы.")
+        else:
+            st.apply_timing = False
+            await cb.message.answer("⏭ Оставляю стандартную длительность для всех сцен.")
+        await cb.answer()
+        st.busy = True
+        try:
+            await _after_timing_review(cb.message, st)
+        except Exception as e:
+            log.exception("after timing review failed")
+            await cb.message.answer(f"❌ Ошибка: `{type(e).__name__}: {e}`")
+            st.busy = False
+            reset(cb.message.chat.id)
 
     @dp.callback_query(F.data.startswith("dlg:"))
     async def cb_dialogue(cb: types.CallbackQuery):

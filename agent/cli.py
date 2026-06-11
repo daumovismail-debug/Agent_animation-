@@ -8,6 +8,7 @@ from .clarify import plan_questions, ask_user_interactively
 from .script import generate_script
 from .prompt_builder import build_image_prompts, build_animation_prompts
 from .render import slugify, render_markdown
+from .timing import advise_project
 
 
 def main(argv=None):
@@ -76,6 +77,23 @@ def main(argv=None):
         dialogue_mode=args.dialogue,
     )
     print(f"      «{project.title}» — {len(project.scenes)} сцен")
+
+    advice_list = advise_project(project, args.duration)
+    if advice_list:
+        print(f"\n⚠  Тайминг реплик:")
+        for a in advice_list:
+            if a.status == "long":
+                print(
+                    f"  Сцена {a.scene_number}: ~{a.estimated_sec}с речи — "
+                    f"длительность будет увеличена до {a.recommended_duration}с"
+                )
+            else:
+                print(
+                    f"  Сцена {a.scene_number}: ~{a.estimated_sec}с речи — "
+                    f"рекомендуется разбить на {a.split_count} клипа "
+                    f"по {a.recommended_duration}с (пометка будет в файле)"
+                )
+        print()
 
     print(f"[3/4] Генерирую промты для картинок (ключевые кадры)...")
     build_image_prompts(project)

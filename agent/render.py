@@ -46,6 +46,10 @@ def render_markdown(project: VideoProject) -> str:
             f"- {s.duration_sec} сек | {s.aspect_ratio} | {s.mood} | "
             f"кадров: {len(s.keyframes)}",
             "",
+        ]
+        if s.timing_note:
+            lines += [f"> ⚠ {s.timing_note}", ""]
+        lines += [
             "### Промты для картинок",
             "",
         ]
@@ -124,8 +128,10 @@ def render_scene_brief(scene, total: int) -> str:
         f"🎬 Сцена {scene.number}/{total}: {scene.summary}",
         f"⏱ {scene.duration_sec}с | {scene.aspect_ratio} | {scene.mood} | "
         f"🖼 кадров: {len(scene.keyframes)}",
-        "",
     ]
+    if scene.timing_note:
+        parts.append(f"⚠ _{scene.timing_note}_")
+    parts.append("")
     for i, k in enumerate(scene.keyframes, 1):
         title = _KF_TITLE.get(k.label, k.label)
         parts += [
