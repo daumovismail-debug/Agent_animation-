@@ -23,5 +23,10 @@
     "look": "2D cartoon, bold outlines, flat colors, exaggerated motion",
     "lighting": "flat cel shading",
     "color": "bright primary colors, high saturation"
+  },
+  "melodrama": {
+    "look": "emotional TV drama, shot on Sony Venice, 50mm–85mm portrait lens, shallow depth of field, soft bokeh, close-ups of faces and hands",
+    "lighting": "warm soft key light, gentle diffused fill, candle or lamp practical sources, no harsh shadows, golden interior glow",
+    "color": "warm amber and rose grade, lifted shadows, soft contrast, skin tones rich and luminous, desaturated cool backgrounds"
   }
 }
