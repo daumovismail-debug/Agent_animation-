@@ -3,6 +3,41 @@ from typing import List, Optional
 
 
 @dataclass
+class Character:
+    name: str
+    age: str = ""
+    appearance: str = ""
+    clothing: str = ""
+    personality: str = ""
+    speech_style: str = ""
+    special_features: str = ""
+
+    def anchor(self) -> str:
+        parts = [self.name]
+        if self.age:
+            parts.append(self.age + " лет")
+        if self.appearance:
+            parts.append(self.appearance)
+        if self.clothing:
+            parts.append(self.clothing)
+        if self.special_features and self.special_features.lower() not in ("нет", "no", "none", "-"):
+            parts.append(self.special_features)
+        return ", ".join(parts)
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
+class UserPreference:
+    key: str
+    description: str
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
 class DialogueLine:
     speaker: str
     text: str
@@ -66,6 +101,11 @@ class VideoProject:
     dialogue_mode: str = "auto"
     scenes: List[Scene] = field(default_factory=list)
     clarifications: dict = field(default_factory=dict)
+    characters: List[Character] = field(default_factory=list)
+    user_preferences: List[UserPreference] = field(default_factory=list)
+    session_name: str = ""
+    aspect_ratio: str = "16:9"
+    total_duration_sec: int = 0
 
     def to_dict(self):
         return {
@@ -80,4 +120,5 @@ class VideoProject:
             "dialogue_mode": self.dialogue_mode,
             "clarifications": self.clarifications,
             "scenes": [s.to_dict() for s in self.scenes],
+            "characters": [c.to_dict() for c in self.characters],
         }
