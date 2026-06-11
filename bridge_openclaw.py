@@ -363,6 +363,8 @@ def render_scene(
     suffix: str = "",
     video_resolution: str = "480p",
     image_resolution: str | None = None,
+    image_only: bool = False,
+    video_only: bool = False,
 ) -> bool:
     n = scene["number"]
     img_path = render_dir / f"scene_{n}{suffix}.jpg"
@@ -386,47 +388,55 @@ def render_scene(
     duration = int(scene.get("duration_sec", 6))
 
     # Шаг 1: картинка
-    if img_path.exists():
-        log.info("Сцена %d [1/2]: картинка уже есть, пропускаю → %s", n, img_path)
-    else:
-        res_label = image_resolution or "default"
-        log.info("Сцена %d [1/2]: генерирую картинку (%s) → %s", n, res_label, img_path)
+    if not video_only:
+        if img_path.exists():
+            log.info("Сцена %d [1/2]: картинка уже есть, пропускаю → %s", n, img_path)
+        else:
+            res_label = image_resolution or "default"
+            log.info("Сцена %d [1/2]: генерирую картинку (%s) → %s", n, res_label, img_path)
 
-        ref_paths = list((char_refs or {}).values())
-        use_xai_direct = bool(ref_paths) and not dry_run
+            ref_paths = list((char_refs or {}).values())
+            use_xai_direct = bool(ref_paths) and not dry_run
 
-        if use_xai_direct:
-            log.info("Сцена %d: xAI /images/generations с %d референсом персонажей", n, len(ref_paths))
-            ok = xai_generate_image(
-                prompt=image_prompt,
-                output_path=img_path,
-                token=token,
-                reference_image_paths=ref_paths,
-                aspect_ratio=aspect,
-                image_resolution=image_resolution,
-            )
+            if use_xai_direct:
+                log.info("Сцена %d: xAI /images/generations с %d референсом персонажей", n, len(ref_paths))
+                ok = xai_generate_image(
+                    prompt=image_prompt,
+                    output_path=img_path,
+                    token=token,
+                    reference_image_paths=ref_paths,
+                    aspect_ratio=aspect,
+                    image_resolution=image_resolution,
+                )
+                if not ok:
+                    log.warning("Сцена %d: xAI image failed, fallback на openclaw", n)
+                    use_xai_direct = False
+
+            if not use_xai_direct:
+                ok = run_shell(
+                    openclaw_cmd([
+                        "infer", "image", "generate",
+                        "--prompt", image_prompt,
+                        "--model", IMAGE_MODEL,
+                        "--output", str(img_path),
+                    ]),
+                    dry_run,
+                )
+
             if not ok:
-                log.warning("Сцена %d: xAI image failed, fallback на openclaw", n)
-                use_xai_direct = False
+                log.error("Сцена %d: ошибка генерации картинки, пропускаю сцену", n)
+                return False
 
-        if not use_xai_direct:
-            ok = run_shell(
-                openclaw_cmd([
-                    "infer", "image", "generate",
-                    "--prompt", image_prompt,
-                    "--model", IMAGE_MODEL,
-                    "--output", str(img_path),
-                ]),
-                dry_run,
-            )
-
-        if not ok:
-            log.error("Сцена %d: ошибка генерации картинки, пропускаю сцену", n)
+            log.info("Пауза %d сек...", PAUSE)
+            if not dry_run:
+                time.sleep(PAUSE)
+    else:
+        if not img_path.exists() and not dry_run:
+            log.error("Сцена %d: картинка не найдена для генерации видео: %s", n, img_path)
             return False
 
-        log.info("Пауза %d сек...", PAUSE)
-        if not dry_run:
-            time.sleep(PAUSE)
+    if image_only:
+        return True
 
     # Шаг 2: image-to-video через xAI API напрямую
     log.info("Сцена %d [2/2]: генерирую видео %s → %s", n, video_resolution, mp4_path)
@@ -453,6 +463,18 @@ def render_scene(
     log.info("Пауза %d сек...", PAUSE)
     time.sleep(PAUSE)
     return True
+
+
+def ask_accept(img_path: Path) -> bool:
+    """Показывает путь к картинке и ждёт ввода. True = принять, False = перегенерить."""
+    print(f"\n  {'─' * 50}")
+    print(f"  Картинка: {img_path}")
+    print(f"  {'─' * 50}")
+    try:
+        answer = input("  Enter = принять,  r = перегенерить: ").strip().lower()
+    except EOFError:
+        return True
+    return answer != "r"
 
 
 # ── ffmpeg concat ─────────────────────────────────────────────────────────────
@@ -508,6 +530,8 @@ def main():
         "--quality", choices=["draft", "hd"], default="draft",
         help="draft = 480p черновик → final.mp4 (по умолчанию); hd = 720p + картинка 2k → final_hd.mp4",
     )
+    parser.add_argument("--step", action="store_true",
+                        help="Сначала подтвердить все картинки, потом генерировать видео")
     args = parser.parse_args()
 
     q = QUALITY[args.quality]
@@ -568,21 +592,71 @@ def main():
 
     ok_count = 0
     fail_count = 0
-    for scene in scenes:
-        n = scene["number"]
-        log.info("━━━ Сцена %d / %d ━━━", n, len(scenes))
-        if render_scene(
-            scene, render_dir, token, args.dry_run, char_refs,
-            suffix=suffix,
-            video_resolution=video_resolution,
-            image_resolution=image_resolution,
-        ):
-            ok_count += 1
-        else:
-            fail_count += 1
+
+    if args.step:
+        # ── Фаза 1: генерация и подтверждение картинок ───────────────────────
+        log.info("━━━ ФАЗА 1: картинки (%d сцен) ━━━", len(scenes))
+        accepted_scenes = []
+        for scene in scenes:
+            n = scene["number"]
+            img_path = render_dir / f"scene_{n}{suffix}.jpg"
+            log.info("━━━ Сцена %d / %d [КАРТИНКА] ━━━", n, len(scenes))
+            while True:
+                ok = render_scene(
+                    scene, render_dir, token, args.dry_run, char_refs,
+                    suffix=suffix,
+                    video_resolution=video_resolution,
+                    image_resolution=image_resolution,
+                    image_only=True,
+                )
+                if not ok:
+                    log.error("Сцена %d: пропускаю (ошибка генерации)", n)
+                    fail_count += 1
+                    break
+                if ask_accept(img_path):
+                    accepted_scenes.append(scene)
+                    break
+                # Пользователь нажал r — удалить и перегенерировать
+                if img_path.exists():
+                    img_path.unlink()
+                log.info("Сцена %d: перегенерирую...", n)
+
+        # ── Фаза 2: генерация видео (только принятые сцены) ──────────────────
+        log.info("")
+        log.info("━━━ ФАЗА 2: видео (%d принятых сцен) ━━━", len(accepted_scenes))
+        for scene in accepted_scenes:
+            n = scene["number"]
+            log.info("━━━ Сцена %d / %d [ВИДЕО] ━━━", n, len(accepted_scenes))
+            if render_scene(
+                scene, render_dir, token, args.dry_run, char_refs,
+                suffix=suffix,
+                video_resolution=video_resolution,
+                image_resolution=image_resolution,
+                video_only=True,
+            ):
+                ok_count += 1
+            else:
+                fail_count += 1
+
+        concat_scenes = accepted_scenes
+    else:
+        for scene in scenes:
+            n = scene["number"]
+            log.info("━━━ Сцена %d / %d ━━━", n, len(scenes))
+            if render_scene(
+                scene, render_dir, token, args.dry_run, char_refs,
+                suffix=suffix,
+                video_resolution=video_resolution,
+                image_resolution=image_resolution,
+            ):
+                ok_count += 1
+            else:
+                fail_count += 1
+
+        concat_scenes = scenes
 
     log.info("━━━ Склейка ━━━")
-    final = concat_videos(render_dir, scenes, args.dry_run,
+    final = concat_videos(render_dir, concat_scenes, args.dry_run,
                           suffix=suffix, final_name=final_name)
 
     log.info("━━━ Итог ━━━")
