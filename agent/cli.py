@@ -18,7 +18,7 @@ def main(argv=None):
     parser.add_argument("idea", help="Идея видео одной фразой")
     parser.add_argument(
         "--style",
-        default="cinematic",
+        default="3d",
         choices=["cinematic", "anime", "3d", "realistic", "cartoon"],
         help="Визуальный стиль",
     )

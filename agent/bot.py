@@ -62,7 +62,7 @@ class ChatState:
     # Этап: "idle" | "setup" | "clarify" | "dialogue_review"
     stage: str = "idle"
     idea: Optional[str] = None
-    style: str = "cinematic"
+    style: str = "3d"
     scenes_count: int = 4
     duration: int = 6
     aspect: str = "16:9"

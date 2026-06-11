@@ -97,7 +97,7 @@ def _ingest_keyframes(scene, data: dict, n: int) -> bool:
 def build_image_prompts(project: VideoProject) -> VideoProject:
     system = (PROMPTS_DIR / "system_image_prompt.md").read_text(encoding="utf-8")
     styles = _load_styles()
-    style_pack = styles.get(project.style, styles["cinematic"])
+    style_pack = styles.get(project.style, styles["3d"])
     for scene in project.scenes:
         n = _resolve_keyframes_count(scene, project)
         ctx = _scene_context(scene, project, style_pack, include_dialogue=False)
@@ -124,7 +124,7 @@ async def build_image_prompts_async(project: VideoProject) -> VideoProject:
     """Сцены параллельно, но с лимитом _CONCURRENCY."""
     system = (PROMPTS_DIR / "system_image_prompt.md").read_text(encoding="utf-8")
     styles = _load_styles()
-    style_pack = styles.get(project.style, styles["cinematic"])
+    style_pack = styles.get(project.style, styles["3d"])
     sem = asyncio.Semaphore(_CONCURRENCY)
 
     async def one(scene):
@@ -159,7 +159,7 @@ def build_animation_prompts(
 ) -> VideoProject:
     system = (PROMPTS_DIR / "system_animation_prompt.md").read_text(encoding="utf-8")
     styles = _load_styles()
-    style_pack = styles.get(project.style, styles["cinematic"])
+    style_pack = styles.get(project.style, styles["3d"])
     for scene in project.scenes:
         ctx = _scene_context(scene, project, style_pack)
         user = _animation_user(scene, ctx, duration, aspect, project)
@@ -177,7 +177,7 @@ async def build_animation_prompts_async(
     """Сцены параллельно с лимитом _CONCURRENCY."""
     system = (PROMPTS_DIR / "system_animation_prompt.md").read_text(encoding="utf-8")
     styles = _load_styles()
-    style_pack = styles.get(project.style, styles["cinematic"])
+    style_pack = styles.get(project.style, styles["3d"])
     sem = asyncio.Semaphore(_CONCURRENCY)
 
     async def one(scene):
