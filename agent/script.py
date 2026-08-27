@@ -1,8 +1,19 @@
 from pathlib import Path
 from .llm import ask_json, ask_json_async
 from .models import Scene, VideoProject, DialogueLine
+from .training import augment_system
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+
+# Имя агента для обучения: эталоны лежат в training/screenwriter/,
+# правила — в training/rules/screenwriter.md
+SCREENWRITER_AGENT = "screenwriter"
+
+
+def _script_system() -> str:
+    """Базовый промпт Сценариста + твои эталоны и правила (обучение)."""
+    base = (PROMPTS_DIR / "system_script.md").read_text(encoding="utf-8")
+    return augment_system(base, SCREENWRITER_AGENT)
 
 
 def _script_user(idea, style, scenes_count, is_dialogue_heavy, clarifications,
@@ -89,7 +100,7 @@ def generate_script(
     language: str = "auto",
     dialogue_mode: str = "auto",
 ) -> VideoProject:
-    system = (PROMPTS_DIR / "system_script.md").read_text(encoding="utf-8")
+    system = _script_system()
     user = _script_user(idea, style, scenes_count, is_dialogue_heavy,
                         clarifications, keyframes_mode, language, dialogue_mode)
     data = ask_json(system, user)
@@ -107,7 +118,7 @@ async def generate_script_async(
     language: str = "auto",
     dialogue_mode: str = "auto",
 ) -> VideoProject:
-    system = (PROMPTS_DIR / "system_script.md").read_text(encoding="utf-8")
+    system = _script_system()
     user = _script_user(idea, style, scenes_count, is_dialogue_heavy,
                         clarifications, keyframes_mode, language, dialogue_mode)
     data = await ask_json_async(system, user)
